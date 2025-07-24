@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Ruta-Libre MAX 📍</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f7;
+      color: #333;
+    }
+    header {
+      background: #1abc9c;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    select, button, input {
+      font-size: 16px;
+      padding: 10px;
+      margin: 5px auto;
+      border-radius: 5px;
+      border: none;
+      width: 90%;
+      max-width: 350px;
+      display: block;
+    }
+    button {
+      color: white;
+      cursor: pointer;
+    }
+    .start { background: #27ae60; }
+    .pause { background: #f1c40f; }
+    .stop  { background: #e74c3c; }
+
+    #map {
+      height: 250px;
+      width: 95%;
+      margin: 10px auto;
+      border-radius: 10px;
+    }
+
+    .metric, .controls, .popup, .registro {
+      text-align: center;
+      margin: 10px auto;
+      width: 95%;
+      max-width: 600px;
+    }
+
+    .metric {
+      background: #d6eaf8;
+      display: inline-block;
+      margin: 5px;
+      padding: 10px;
+      border-radius: 8px;
+      font-weight: bold;
+      min-width: 120px;
+    }
+
+    .popup {
+      background: white;
+      border: 2px solid #1abc9c;
+      padding: 20px;
+      border-radius: 10px;
+      display: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    }
+
+    @media (max-width: 480px) {
+      #map { height: 200px; }
+      .metric { font-size: 14px; min-width: 100px; }
+      select, button, input { font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h2>Ruta-Libre MAX 📍</h2>
+  <p>Tu entrenamiento, sin límites</p>
+</header>
+
+<div class="registro" id="registro">
+  <h3>👤 Datos del usuario</h3>
+  <input type="text" id="nombre" placeholder="Nombre">
+  <input type="number" id="peso" placeholder="Peso en kg">
+  <button onclick="guardarUsuario()">✅ Continuar</button>
+</div>
+
+<div class="controls" style="display:none" id="controles">
+  <select id="actividad">
+    <option value="Correr">🏃 Correr</option>
+    <option value="Caminar">🚶 Caminar</option>
+    <option value="Bicicleta">🚴 Bicicleta</option>
+    <option value="Senderismo">🥾 Senderismo</option>
+  </select>
+  <button class="start" onclick="startTracking()">🟢 Iniciar</button>
+  <button class="pause" onclick="togglePause()">⏸️ Pausar / Reanudar</button>
+  <button class="stop" onclick="finalizeTracking()">⏹️ Finalizar</button>
+</div>
+
+<div id="map"></div>
+
+<div class="metric">
+  🧭 Actividad: <span id="tipo">-</span>  
+</div>
+<div class="metric">
+  📏 Distancia: <span id="dist">0.00 km</span>  
+</div>
+<div class="metric">
+  🕒 Tiempo: <span id="time">0:00</span>  
+</div>
+<div class="metric">
+  ⚡ Velocidad: <span id="speed">0 km/h</span>
+</div>
+<div class="metric">
+  🔥 Calorías: <span id="calorias">0 kcal</span>
+</div>
+
+<div class="popup" id="savePopup">
+  <h3>¿Guardar esta sesión?</h3>
+  <p>Actividad: <span id="finalTipo"></span></p>
+  <p>Distancia: <span id="finalDist"></span> km</p>
+  <p>Tiempo: <span id="finalTime"></span></p>
+  <p>Calorías: <span id="finalCalorias"></span> kcal</p>
+  <button onclick="saveActivity()">💾 Guardar</button>
+  <button onclick="discardActivity()">🗑️ Descartar</button>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+let map, watchID, path = [], distance = 0, paused = false;
+let timerInterval, startTime, elapsedTime = 0;
+let userData = {}, METs = { Correr: 9.8, Caminar: 3.5, Bicicleta: 6.8, Senderismo: 6.0 };
+
+function guardarUsuario() {
+  const nombre = document.getElementById("nombre").value.trim();
+  const peso = parseFloat(document.getElementById("peso").value);
+  if (!nombre || isNaN(peso)) return alert("⚠️ Ingresa tu nombre y peso");
+
+  userData = { nombre, peso };
+  localStorage.setItem("rutaLibreUsuario", JSON.stringify(userData));
+  document.getElementById("registro").style.display = "none";
+  document.getElementById("controles").style.display = "block";
+}
+
+function startTracking() {
+  if (!map) {
+    map = L.map('map').setView([3.45, -76.53], 15);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  }
+  document.getElementById("tipo").textContent = actividad.value;
+  distance = 0;
+  path = [];
+  elapsedTime = 0;
+  startTime = Date.now();
+  timerInterval = setInterval(updateMetrics, 1000);
+  watchID = navigator.geolocation.watchPosition(trackPosition, showGPSWarning, { enableHighAccuracy: true });
+  paused = false;
+}
+
+function togglePause() {
+  paused = !paused;
+  if (paused) {
+    clearInterval(timerInterval);
+    navigator.geolocation.clearWatch(watchID);
+    alert("⏸️ Actividad pausada");
+  } else {
+    startTime = Date.now() - elapsedTime;
+    timerInterval = setInterval(updateMetrics, 1000);
+    watchID = navigator.geolocation.watchPosition(trackPosition, showGPSWarning, { enableHighAccuracy: true });
+    alert("▶️ Actividad reanudada");
+  }
+}
+
+function trackPosition(pos) {
+  if (paused) return;
+  const lat = pos.coords.latitude, lon = pos.coords.longitude;
+  const speed = (pos.coords.speed || 0) * 3.6;
+  document.getElementById('speed').textContent = speed.toFixed(1) + ' km/h';
+  path.push([lat, lon]);
+  if (path.length > 1) {
+    const [lat1, lon1] = path[path.length - 2];
+    distance += calcDist(lat1, lon1, lat, lon);
+    document.getElementById('dist').textContent = distance.toFixed(2) + ' km';
+    const color = actividad.value === "Senderismo" ? "#8E44AD" : "#1ABC9C";
+    L.circleMarker([lat, lon], { radius: 5, color }).addTo(map);
+  }
+  map.setView([lat, lon], map.getZoom());
+}
+
+function showGPSWarning() {
+  alert("📡 Señal GPS débil o bloqueada.");
+}
+
+function calcDist(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function updateMetrics() {
+  elapsedTime = Date.now() - startTime;
+  const sec = Math.floor(elapsedTime / 1000);
+  const min = Math.floor(sec / 60);
+  const s = sec % 60;
+  document.getElementById('time').textContent = `${min}:${s.toString().padStart(2, '0')}`;
+
+  const MET = METs[actividad.value] || 5;
+  const calorias = MET * userData.peso * (sec / 3600);
+  document.getElementById('calorias').textContent = `${calorias.toFixed(0)} kcal`;
+}
+
+function finalizeTracking() {
+  clearInterval(timerInterval);
+  navigator.geolocation.clearWatch(watchID);
+  document.getElementById('finalTipo').textContent = actividad.value;
+  document.getElementById('finalDist').textContent = distance.toFixed(2);
+  document.getElementById('finalTime').textContent = document.getElementById('time').textContent;
+  document.getElementById('finalCalorias').textContent = document.getElementById('calorias').textContent;
+  document.getElementById('savePopup').style.display = 'block';
+}
+
+function saveActivity() {
+  const resumen = {
+    tipo: actividad.value,
+    distancia: distance.toFixed(2),
+    tiempo: document.getElementById('time').textContent,
+    calorias: document.getElementById('calorias').textContent,
+    fecha: new Date().toLocaleString(),
+    usuario: userData
+  };
+  let historial = JSON.parse(localStorage.getItem("rutaLibreHistorial") || "[]");
+  historial.push(resumen);
+  localStorage.setItem("rutaLibreHistorial", JSON.stringify(historial));
+  alert(`✅ Sesión guardada para ${userData.nombre}`);
+  resetApp();
+}
+
+function discardActivity() {
+  alert("❌ Actividad descartada");
+  resetApp();
+}
+
+function resetApp() {
+  clearInterval(timerInterval);
+  navigator.geolocation.clearWatch(watchID);
+  distance = 0;
+  path = [];
+  elapsedTime = 0;
+  document.getElementById('dist').textContent = '0.00 km';
+  document.getElementById('time').textContent = '0:00';
+  document.getElementById('speed').textContent = '0 km/h';
+  document.getElementById('tipo').textContent = '-';
+  document.getElementById('calorias').textContent = '0 kcal';
+  document.getElementById('savePopup').style.display = 'none';
+  if (map) {
+    map.remove();
+    map = null;
+  }
+}
+// 🌐 Registrar Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./service-worker.js')
+    .then(() => console.log("✅ Service Worker registrado"))
+    .catch(err => console.error("⚠️ Error registrando SW:", err));
+}
+
+
+</script>
+
+</body>
+</html>
