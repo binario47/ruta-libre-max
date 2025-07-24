@@ -180,27 +180,44 @@ function togglePause() {
 
 function trackPosition(pos) {
   if (paused) return;
+
+  // 🛑 Validar precisión del GPS
+  if (pos.coords.accuracy > 50) {
+    console.warn("📡 Posición poco precisa, ignorada.");
+    return;
+  }
+
   const lat = pos.coords.latitude, lon = pos.coords.longitude;
   const speed = (pos.coords.speed || 0) * 3.6;
   document.getElementById('speed').textContent = speed.toFixed(1) + ' km/h';
 
-  // Solo actualizar si hay movimiento real
-  if (speed > 0.5) {
-    path.push([lat, lon]);
-    if (path.length > 1) {
-      const [lat1, lon1] = path[path.length - 2];
-      const incremento = calcDist(lat1, lon1, lat, lon);
-      if (incremento > 0.003) {
-        distance += incremento;
-        document.getElementById('dist').textContent = distance.toFixed(2) + ' km';
-        const color = actividad.value === "Senderismo" ? "#8E44AD" : "#1ABC9C";
-        L.circleMarker([lat, lon], { radius: 5, color }).addTo(map);
-      }
-    }
-    map.setView([lat, lon], map.getZoom());
-  }
-}
+  // 🧪 Mostrar precisión en interfaz (opcional)
+  document.getElementById("gpsAcc").textContent = pos.coords.accuracy.toFixed(1);
 
+  // 🕒 Activar cronómetro si aún no ha arrancado
+  if (!timerInterval) {
+    startTime = Date.now();
+    timerInterval = setInterval(updateMetrics, 1000);
+  }
+
+  path.push([lat, lon]);
+
+  if (path.length > 1) {
+    const [lat1, lon1] = path[path.length - 2];
+
+    // 📏 Filtrar ruido de movimiento (<5m)
+    const distPaso = calcDist(lat1, lon1, lat, lon);
+    if (distPaso < 0.005) return;
+    distance += distPaso;
+
+    document.getElementById('dist').textContent = distance.toFixed(2) + ' km';
+
+    const color = actividad.value === "Senderismo" ? "#8E44AD" : "#1ABC9C";
+    L.circleMarker([lat, lon], { radius: 5, color }).addTo(map);
+  }
+
+  map.setView([lat, lon], map.getZoom());
+}
 function showGPSWarning() {
   alert("📡 Señal GPS débil o bloqueada.");
 }
